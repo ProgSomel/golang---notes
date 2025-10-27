@@ -4,7 +4,7 @@ import "fmt"
 
 func main() {
 	ch := make(chan int)
-	producer(ch)
+	go producer(ch)
 	consumer(ch)
 }
 

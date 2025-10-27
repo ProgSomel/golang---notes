@@ -896,3 +896,371 @@ case <-time.After(5 * time.Second):
 ## Conclusion
 
 The deadlock occurs because sequential function calls cannot satisfy the concurrent communication requirements of unbuffered channels. The producer blocks on the first send operation because no receiver is available, and the consumer never gets called because the main goroutine is stuck in the producer function. The solution requires concurrent execution using goroutines or buffered channels to allow asynchronous communication. Understanding this pattern is crucial for building reliable concurrent Go programs that avoid deadlock conditions.
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+	ch := make(chan int)
+	producer(ch)
+	go consumer(ch)
+}
+
+//! Send only channel
+func producer(ch chan <- int) {
+	for i := range 5 {
+		ch <- i
+	}
+	close(ch)
+}
+
+//! Receive only channel
+func consumer(ch <- chan int) {
+	for value := range ch {
+		fmt.Println("Received: ", value)
+	}
+}
+```
+```bash
+fatal error: all goroutines are asleep - deadlock!
+
+goroutine 1 [chan send]:
+main.producer(...)
+        /Users/progsomel/Library/Mobile Documents/com~apple~CloudDocs/ProgSomel/Study/Programming/golang---notes/003 - Go Programming - Advanced/108 - Channel Directions/channel_directions.go:14
+main.main()
+        /Users/progsomel/Library/Mobile Documents/com~apple~CloudDocs/ProgSomel/Study/Programming/golang---notes/003 - Go Programming - Advanced/108 - Channel Directions/channel_directions.go:7 +0x45
+exit status 2
+```
+This code will still cause a deadlock because of the execution order. Here's why:
+**The Problem**
+```go
+func main() {
+	ch := make(chan int)
+	producer(ch)      // ❌ Main goroutine gets stuck here
+	go consumer(ch)   // ❌ Never reached
+}
+```
+
+---
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+	ch := make(chan int)
+	go producer(ch)
+	consumer(ch)
+}
+
+//! Send only channel
+func producer(ch chan <- int) {
+	for i := range 5 {
+		ch <- i
+	}
+	close(ch)
+}
+
+//! Receive only channel
+func consumer(ch <- chan int) {
+	for value := range ch {
+		fmt.Println("Received: ", value)
+	}
+}
+```
+```bash
+Received:  0
+Received:  1
+Received:  2
+Received:  3
+Received:  4
+```
+# Go Channel Communication - Working Producer-Consumer Pattern
+
+## Overview
+
+This document analyzes a working Go program that demonstrates the correct implementation of concurrent producer-consumer pattern using channels. The code shows how proper goroutine placement enables successful communication through unbuffered channels.
+
+## Code Under Analysis
+```go
+package main
+
+import "fmt"
+
+func main() {
+	ch := make(chan int)
+	go producer(ch)
+	consumer(ch)
+}
+
+//! Send only channel
+func producer(ch chan <- int) {
+	for i := range 5 {
+		ch <- i
+	}
+	close(ch)
+}
+
+//! Receive only channel
+func consumer(ch <- chan int) {
+	for value := range ch {
+		fmt.Println("Received: ", value)
+	}
+}
+```
+
+## Output
+```
+Received:  0
+Received:  1
+Received:  2
+Received:  3
+Received:  4
+```
+
+## Why This Code Works
+
+### Correct Concurrent Pattern
+
+The code succeeds because it implements the proper **producer-consumer pattern** with appropriate goroutine separation:
+
+1. **Producer runs in separate goroutine**: `go producer(ch)`
+2. **Consumer runs in main goroutine**: `consumer(ch)`
+3. **Both can communicate concurrently** through the channel
+
+## Step-by-Step Execution Flow
+
+### Step 1: Channel Creation
+```go
+ch := make(chan int)
+```
+
+**What happens:**
+- Creates unbuffered channel for integer communication
+- Channel capacity: 0 (requires synchronous send/receive)
+- Channel state: Open and empty
+
+### Step 2: Producer Goroutine Launch
+```go
+go producer(ch)
+```
+
+**What happens:**
+- Launches producer function in new goroutine
+- Producer goroutine starts executing concurrently
+- Main goroutine continues immediately to next line
+- Both goroutines now running in parallel
+
+### Step 3: Consumer Function Call
+```go
+consumer(ch)
+```
+
+**What happens:**
+- Main goroutine enters consumer function
+- Consumer starts waiting for data from channel
+- Now both producer and consumer are active
+
+### Step 4: Channel Communication
+```go
+// Producer side (goroutine):
+for i := range 5 {
+    ch <- i  // Sends 0, 1, 2, 3, 4
+}
+
+// Consumer side (main):
+for value := range ch {
+    fmt.Println("Received: ", value)  // Receives and prints
+}
+```
+
+**What happens:**
+- Producer sends values one by one
+- Consumer receives and prints each value
+- Unbuffered channel creates synchronous handshakes
+- Each send blocks until corresponding receive occurs
+
+### Step 5: Channel Closure and Termination
+```go
+// Producer:
+close(ch)  // Signals completion
+
+// Consumer:
+// Range loop detects closure and exits
+```
+
+**What happens:**
+- Producer closes channel after sending all data
+- Consumer's range loop detects closed channel
+- Consumer function returns to main
+- Program terminates cleanly
+
+## Detailed Execution Timeline
+```
+Time 0ms:
+├─ Main: Creates unbuffered channel
+├─ Main: Launches producer goroutine
+├─ Producer Goroutine: Starts loop, attempts ch <- 0
+├─ Main: Enters consumer function
+└─ Consumer: Starts range loop, attempts <-ch
+
+Time ~0ms: First Communication
+├─ Producer: Sends 0 (blocks until received)
+├─ Consumer: Receives 0 (handshake occurs)
+├─ Consumer: Prints "Received: 0"
+├─ Producer: Continues to next iteration
+└─ Consumer: Returns to range loop
+
+Time ~1ms: Second Communication
+├─ Producer: Sends 1
+├─ Consumer: Receives 1
+└─ Consumer: Prints "Received: 1"
+
+Time ~2-4ms: Continued Communication
+├─ Similar pattern for values 2, 3, 4
+└─ Each value follows same send-receive-print cycle
+
+Time ~5ms: Completion
+├─ Producer: Completes loop, executes close(ch)
+├─ Producer: Goroutine terminates
+├─ Consumer: Range loop detects closed channel
+├─ Consumer: Exits loop, function returns
+└─ Program: Terminates successfully
+```
+
+## Channel Communication Mechanics
+
+### Unbuffered Channel Synchronization
+| Step | Producer Action | Consumer Action | Result |
+|------|----------------|-----------------|--------|
+| 1 | `ch <- 0` (blocks) | `<-ch` (ready) | Value 0 transferred |
+| 2 | `ch <- 1` (blocks) | `<-ch` (ready) | Value 1 transferred |
+| 3 | `ch <- 2` (blocks) | `<-ch` (ready) | Value 2 transferred |
+| 4 | `ch <- 3` (blocks) | `<-ch` (ready) | Value 3 transferred |
+| 5 | `ch <- 4` (blocks) | `<-ch` (ready) | Value 4 transferred |
+| 6 | `close(ch)` | Range detects close | Loop exits |
+
+### Handshake Process
+Each communication follows this pattern:
+1. Producer attempts to send value
+2. Producer blocks waiting for receiver
+3. Consumer attempts to receive value
+4. Handshake occurs - value transfers directly
+5. Both operations unblock and continue
+
+## Key Success Factors
+
+### 1. Proper Goroutine Separation
+```go
+go producer(ch)  // Separate goroutine for sending
+consumer(ch)     // Main goroutine for receiving
+```
+
+This creates **two execution contexts** that can communicate.
+
+### 2. Channel Directionality Type Safety
+```go
+func producer(ch chan<- int)  // Can only send
+func consumer(ch <-chan int)  // Can only receive
+```
+
+Prevents accidental misuse while maintaining functionality.
+
+### 3. Synchronous Communication
+- Unbuffered channel ensures **ordered delivery**
+- Each value is **guaranteed to be received** before next is sent
+- **No data loss** or race conditions
+
+### 4. Proper Resource Management
+- Producer closes channel when done
+- Consumer automatically exits when channel closed
+- No goroutine leaks or deadlocks
+
+## Comparison with Problematic Patterns
+
+### Pattern 1: Sequential Execution (Deadlock)
+```go
+// ❌ Broken: Sequential calls
+func main() {
+    ch := make(chan int)
+    producer(ch)  // Blocks forever
+    consumer(ch)  // Never reached
+}
+```
+
+### Pattern 2: Wrong Goroutine Assignment (Deadlock)
+```go
+// ❌ Broken: Producer not concurrent
+func main() {
+    ch := make(chan int)
+    producer(ch)     // Blocks forever
+    go consumer(ch)  // Never reached
+}
+```
+
+### Pattern 3: Working Pattern (Current)
+```go
+// ✅ Working: Proper concurrency
+func main() {
+    ch := make(chan int)
+    go producer(ch)  // Concurrent producer
+    consumer(ch)     // Sequential consumer
+}
+```
+
+## Alternative Working Patterns
+
+### Both Functions as Goroutines
+```go
+func main() {
+    ch := make(chan int)
+    go producer(ch)
+    go consumer(ch)
+    
+    // Need synchronization to prevent main from exiting
+    time.Sleep(100 * time.Millisecond)
+    // Or use sync.WaitGroup
+}
+```
+
+### Using Buffered Channel
+```go
+func main() {
+    ch := make(chan int, 5)  // Buffer prevents blocking
+    producer(ch)             // Can complete without receiver
+    consumer(ch)             // Reads from buffer
+}
+```
+
+## Best Practices Demonstrated
+
+### 1. Clear Responsibility Separation
+- Producer only sends data and closes channel
+- Consumer only receives data until channel closed
+- No shared mutable state
+
+### 2. Type Safety with Channel Directions
+- Compile-time prevention of channel misuse
+- Self-documenting function purposes
+- Interface compliance support
+
+### 3. Graceful Termination
+- Producer signals completion via channel closure
+- Consumer detects completion automatically
+- Program exits cleanly without forced termination
+
+### 4. Resource Efficiency
+- Single unbuffered channel for communication
+- Minimal memory overhead
+- Deterministic execution order
+
+## Conclusion
+
+This code works because it correctly implements the fundamental principle of Go's channel communication: **concurrent execution contexts connected by synchronous message passing**. The producer runs in a separate goroutine while the consumer runs in the main goroutine, allowing the unbuffered channel to facilitate proper handshake-based communication. The pattern demonstrates type-safe channel usage, proper resource management, and graceful program termination - making it an excellent example of idiomatic Go concurrent programming.
+
+**---**
+
+Overall, what we understand is that unidirectional channels are used in function signatures to specify whether a function can send or receive data. This helps to avoid misuse and clarify the role of each function in a concurrent program.
